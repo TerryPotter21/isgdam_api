@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DAM Instructions</title>
+</head>
+<body>
+    <h2>DAM Instructions</h2>
+    <ul>
+        <li>✅ Rotate at the beginning of the month.</li>
+        <li>✅ Ensure current monthly data is true (before 5th).</li>
+        <li>✅ Weight portfolio matching S&P sector weights.</li>
+    </ul>
+    <p><strong>Current Month:</strong> {{ current_month }}</p>
+    <p><strong>Latest Data:</strong> {{ latest_date }}</p>
+    <p><strong>Model using current monthly data:</strong> {{ is_current }}</p>
+
+    <form action="/tickers" method="post">
+        <button type="submit">Proceed</button>
+    </form>
+
+    <p>For questions or errors: <a href="mailto:tannerterry221@gmail.com">tannerterry221@gmail.com</a></p>
+</body>
+</html>

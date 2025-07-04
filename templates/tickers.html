@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DAM Tickers</title>
+</head>
+<body>
+    <h2>Top DAM Tickers by Sector</h2>
+
+    {% if tickers %}
+        <table border="1" cellpadding="5" cellspacing="0">
+            <tr>
+                <th>Sector</th>
+                <th>Top Ticker</th>
+                <th>Alt Ticker</th>
+            </tr>
+            {% for sector, values in tickers.items() %}
+                <tr>
+                    <td>{{ sector }}</td>
+                    <td>{{ values['top'] }}</td>
+                    <td>{{ values['alt'] }}</td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No tickers were found or data could not be retrieved.</p>
+    {% endif %}
+</body>
+</html>
