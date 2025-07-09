@@ -6,15 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
+import numpy as np
 import yfinance as yf
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
-# Mount static folder (if needed in the future)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,7 +23,6 @@ app.add_middleware(
 
 AUTHORIZED_CODE = "freelunch"
 
-# Login route: GET shows form, POST handles login logic
 @app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
 async def login_page(request: Request):
     if request.method == "POST":
@@ -35,21 +32,17 @@ async def login_page(request: Request):
             return RedirectResponse(url="/instructions", status_code=303)
         else:
             return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid access code"})
-    
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
-# Instructions route: checks if SPY has latest monthly data
 @app.get("/instructions", response_class=HTMLResponse)
 async def show_instructions(request: Request):
     today = datetime.now()
     current_month = today.strftime("%Y-%m")
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
-
     spy = yf.download("SPY", start=start_date, end=end_date, interval="1mo")
     latest_date = spy.index.max().strftime("%Y-%m") if not spy.empty else "N/A"
     is_current = latest_date == current_month
-
     return templates.TemplateResponse("instructions.html", {
         "request": request,
         "current_month": current_month,
@@ -57,21 +50,89 @@ async def show_instructions(request: Request):
         "is_current": is_current
     })
 
-# Ticker output route (dummy data for now)
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = {
-        "Tech": ["AAPL", "MSFT"],
-        "Health": ["ABBV", "JNJ"],
-        "Energy": ["XOM", "CVX"]
-    }
+    # Sample tickers from different sectors
+    tickers = [
+        'AAPL', 'MSFT', 'NVDA',  # Tech
+        'JNJ', 'PFE', 'ABBV',    # Healthcare
+        'XOM', 'CVX', 'COP',     # Energy
+        'JPM', 'BAC', 'GS',      # Financials
+        'WMT', 'COST', 'TGT',    # Consumer Staples
+        'NKE', 'HD', 'LOW'       # Consumer Discretionary
+    ]
 
+    # Define date range
+    today = datetime.now()
+    start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
+    end_date = today.strftime("%Y-%m-%d")
+
+    all_data = []
+
+    # Download SPY data once for beta and excess returns
+    spy = yf.download("SPY", start=start_date, end=end_date, interval="1mo")['Adj Close'].pct_change().sub(0.024/12).fillna(0)
+    spy.name = 'SPY 1R'
+
+    for ticker in tickers:
+        try:
+            data = yf.download(ticker, start=start_date, end=end_date, interval="1mo")['Adj Close']
+            info = yf.Ticker(ticker).info
+            sector = info.get('sector', 'N/A')
+            data = data.to_frame(name='Close')
+            data['Ticker'] = ticker
+            data['Sector'] = sector
+            data['Date'] = data.index
+            data['1R'] = data['Close'].pct_change().sub(0.024 / 12)
+            data['SPY 1R'] = data['Date'].map(spy.to_dict())
+            data.reset_index(drop=True, inplace=True)
+            all_data.append(data)
+        except Exception as e:
+            continue
+
+    if not all_data:
+        return templates.TemplateResponse("tickers.html", {
+            "request": request,
+            "tickers": {"Error": "No data could be retrieved."}
+        })
+
+    df = pd.concat(all_data).dropna(subset=['1R', 'SPY 1R'])
+    df['Month'] = df['Date'].dt.to_period('M')
+
+    # Compute DAM per ticker
+    results = []
+    weights = [0.01, 0.01, 0.04, 0.04, 0.09, 0.09, 0.16, 0.16, 0.25, 0.25, 0.36, 0.36]
+
+    for ticker in df['Ticker'].unique():
+        tdf = df[df['Ticker'] == ticker].sort_values('Date').reset_index(drop=True)
+        if len(tdf) < 13:
+            continue
+        # 12R
+        r12 = (tdf.loc[12, 'Close'] - tdf.loc[0, 'Close']) / tdf.loc[0, 'Close']
+        # 12WR
+        wr12 = sum(tdf.loc[i, '1R'] * weights[i] for i in range(12))
+        # 6V
+        v6 = tdf.loc[:5, '1R'].std(ddof=1) * np.sqrt(2)
+        # 6B
+        b6 = np.cov(tdf.loc[:5, '1R'], tdf.loc[:5, 'SPY 1R'])[0, 1] / np.var(tdf.loc[:5, 'SPY 1R'])
+        # DAM
+        dam = (r12 * wr12) / (v6 * b6) if all(pd.notna([r12, wr12, v6, b6])) and v6 * b6 != 0 else np.nan
+        sector = tdf.loc[0, 'Sector']
+        results.append({'Ticker': ticker, 'Sector': sector, 'DAM': dam})
+
+    result_df = pd.DataFrame(results).dropna()
+
+    # Get top DAM ticker per sector
+    top_tickers = (
+        result_df.sort_values(by='DAM', ascending=False)
+        .groupby('Sector')
+        .first()
+        .reset_index()
+    )
+
+    # Format for display
     result = {}
-    for sector, pair in tickers.items():
-        result[sector] = {
-            "top": pair[0],
-            "alt": pair[1]
-        }
+    for _, row in top_tickers.iterrows():
+        result[row['Sector']] = {'top': row['Ticker']}
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,

@@ -1,15 +1,42 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Top DAM Tickers</title>
+    <title>Top DAM Tickers</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 40px;
+        }
+        h2 {
+            color: #333;
+        }
+        table {
+            border-collapse: collapse;
+            width: 60%;
+        }
+        th, td {
+            border: 1px solid #aaa;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #eee;
+        }
+    </style>
 </head>
 <body>
-  <h2>Top DAM Tickers:</h2>
-  <ul>
-    {% for ticker in tickers %}
-      <li>{{ ticker }}</li>
-    {% endfor %}
-  </ul>
-  <p>Model using current monthly data: <strong>{{ freshness }}</strong></p>
+    <h2>Top DAM Tickers by Sector</h2>
+    <table>
+        <tr>
+            <th>Sector</th>
+            <th>Top Ticker</th>
+        </tr>
+        {% for sector, data in tickers.items() %}
+        <tr>
+            <td>{{ sector }}</td>
+            <td>{{ data.top }}</td>
+        </tr>
+        {% endfor %}
+    </table>
 </body>
 </html>
