@@ -23,7 +23,7 @@ app.add_middleware(
 
 AUTHORIZED_CODE = "freelunch"
 
-@app.route("/", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
