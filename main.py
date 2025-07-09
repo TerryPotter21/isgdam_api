@@ -57,12 +57,12 @@ async def show_instructions(request: Request):
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
     tickers = [
-        'AAPL', 'MSFT', 'NVDA',  # Tech
-        'JNJ', 'PFE', 'ABBV',    # Healthcare
-        'XOM', 'CVX', 'COP',     # Energy
-        'JPM', 'BAC', 'GS',      # Financials
-        'WMT', 'COST', 'TGT',    # Staples
-        'NKE', 'HD', 'LOW'       # Discretionary
+        'AAPL', 'MSFT', 'NVDA',
+        'JNJ', 'PFE', 'ABBV',
+        'XOM', 'CVX', 'COP',
+        'JPM', 'BAC', 'GS',
+        'WMT', 'COST', 'TGT',
+        'NKE', 'HD', 'LOW'
     ]
 
     today = datetime.now()
@@ -71,12 +71,12 @@ async def get_tickers(request: Request):
 
     all_data = []
 
-    # Download SPY data for reference
     spy_data = yf.download("SPY", start=start_date, end=end_date, interval="1mo")
     if isinstance(spy_data.columns, pd.MultiIndex):
         spy_data.columns = spy_data.columns.droplevel(0)
 
     if 'Close' not in spy_data.columns:
+        print("ERROR: SPY data missing 'Close'")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
             "tickers": {"Error": "SPY data download failed."}
@@ -86,18 +86,23 @@ async def get_tickers(request: Request):
     spy_returns.name = 'SPY 1R'
 
     for ticker in tickers:
+        print(f"\nProcessing: {ticker}")
         try:
             data = yf.download(ticker, start=start_date, end=end_date, interval="1mo")
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.droplevel(0)
 
             if 'Close' not in data.columns:
+                print(f"Skipped {ticker}: 'Close' not in data.columns")
                 continue
 
             info = yf.Ticker(ticker).info
             sector = info.get('sector')
             if not sector:
-                continue  # Skip tickers without a valid sector
+                print(f"Skipped {ticker}: No sector info found")
+                continue
+
+            print(f"{ticker} Sector: {sector}")
 
             df = data[['Close']].copy()
             df['Ticker'] = ticker
@@ -108,18 +113,22 @@ async def get_tickers(request: Request):
             df.reset_index(drop=True, inplace=True)
 
             if df[['1R', 'SPY 1R']].isna().all().all():
+                print(f"Skipped {ticker}: All returns are NaN")
                 continue
 
             all_data.append(df)
 
-        except Exception:
+        except Exception as e:
+            print(f"Exception for {ticker}: {e}")
             continue
 
     if not all_data:
+        print("No valid data for any tickers")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
             "tickers": {"Error": "No data could be retrieved."}
         })
+
 
     df = pd.concat(all_data).dropna(subset=['1R', 'SPY 1R'])
     df['Month'] = df['Date'].dt.to_period('M')
