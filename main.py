@@ -1,9 +1,8 @@
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -12,7 +11,10 @@ import yfinance as yf
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# CORS (just in case)
+# Mount static folder (if needed in the future)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,16 +25,22 @@ app.add_middleware(
 
 AUTHORIZED_CODE = "freelunch"
 
+# Login route: GET shows form, POST handles login logic
 @app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
 async def login_page(request: Request):
+    if request.method == "POST":
+        form = await request.form()
+        password = form.get("password")
+        if password == AUTHORIZED_CODE:
+            return RedirectResponse(url="/instructions", status_code=303)
+        else:
+            return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid access code"})
+    
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
-@app.post("/instructions", response_class=HTMLResponse)
-async def show_instructions(request: Request, code: str = Form(...)):
-    if code != AUTHORIZED_CODE:
-        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid access code"})
-
-    # Check data freshness using SPY
+# Instructions route: checks if SPY has latest monthly data
+@app.get("/instructions", response_class=HTMLResponse)
+async def show_instructions(request: Request):
     today = datetime.now()
     current_month = today.strftime("%Y-%m")
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
@@ -49,9 +57,9 @@ async def show_instructions(request: Request, code: str = Form(...)):
         "is_current": is_current
     })
 
+# Ticker output route (dummy data for now)
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    # TEMP: Use just a few tickers for now
     tickers = {
         "Tech": ["AAPL", "MSFT"],
         "Health": ["ABBV", "JNJ"],
