@@ -40,9 +40,13 @@ async def show_instructions(request: Request):
     current_month = today.strftime("%Y-%m")
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
+    
     spy = yf.download("SPY", start=start_date, end=end_date, interval="1mo")
+    if isinstance(spy.columns, pd.MultiIndex):
+        spy.columns = spy.columns.droplevel(0)
     latest_date = spy.index.max().strftime("%Y-%m") if not spy.empty else "N/A"
     is_current = latest_date == current_month
+    
     return templates.TemplateResponse("instructions.html", {
         "request": request,
         "current_month": current_month,
@@ -52,40 +56,41 @@ async def show_instructions(request: Request):
 
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    # Sample tickers from different sectors
     tickers = [
-        'AAPL', 'MSFT', 'NVDA',  # Tech
-        'JNJ', 'PFE', 'ABBV',    # Healthcare
-        'XOM', 'CVX', 'COP',     # Energy
-        'JPM', 'BAC', 'GS',      # Financials
-        'WMT', 'COST', 'TGT',    # Consumer Staples
-        'NKE', 'HD', 'LOW'       # Consumer Discretionary
+        'AAPL', 'MSFT', 'NVDA',
+        'JNJ', 'PFE', 'ABBV',
+        'XOM', 'CVX', 'COP',
+        'JPM', 'BAC', 'GS',
+        'WMT', 'COST', 'TGT',
+        'NKE', 'HD', 'LOW'
     ]
 
-    # Define date range
     today = datetime.now()
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
 
-    all_data = []
+    spy_data = yf.download("SPY", start=start_date, end=end_date, interval="1mo")
+    if isinstance(spy_data.columns, pd.MultiIndex):
+        spy_data.columns = spy_data.columns.droplevel(0)
+    spy_returns = spy_data["Close"].pct_change().sub(0.024 / 12).fillna(0)
+    spy_returns.name = "SPY 1R"
 
-    # Download SPY data once for beta and excess returns
-    spy = yf.download("SPY", start=start_date, end=end_date, interval="1mo")['Adj Close'].pct_change().sub(0.024/12).fillna(0)
-    spy.name = 'SPY 1R'
+    all_data = []
 
     for ticker in tickers:
         try:
-            data = yf.download(ticker, start=start_date, end=end_date, interval="1mo")['Adj Close']
+            df = yf.download(ticker, start=start_date, end=end_date, interval="1mo")
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(0)
+            df = df[["Close"]].copy()
+            df["Date"] = df.index
+            df["Ticker"] = ticker
+            df["1R"] = df["Close"].pct_change().sub(0.024 / 12)
+            df["SPY 1R"] = df["Date"].map(spy_returns.to_dict())
+            df.reset_index(drop=True, inplace=True)
             info = yf.Ticker(ticker).info
-            sector = info.get('sector', 'N/A')
-            data = data.to_frame(name='Close')
-            data['Ticker'] = ticker
-            data['Sector'] = sector
-            data['Date'] = data.index
-            data['1R'] = data['Close'].pct_change().sub(0.024 / 12)
-            data['SPY 1R'] = data['Date'].map(spy.to_dict())
-            data.reset_index(drop=True, inplace=True)
-            all_data.append(data)
+            df["Sector"] = info.get("sector", "N/A")
+            all_data.append(df)
         except Exception as e:
             continue
 
@@ -95,44 +100,43 @@ async def get_tickers(request: Request):
             "tickers": {"Error": "No data could be retrieved."}
         })
 
-    df = pd.concat(all_data).dropna(subset=['1R', 'SPY 1R'])
-    df['Month'] = df['Date'].dt.to_period('M')
+    df = pd.concat(all_data).dropna(subset=["1R", "SPY 1R"])
+    df["Month"] = df["Date"].dt.to_period("M")
+    latest_month = df["Month"].max()
 
-    # Compute DAM per ticker
-    results = []
     weights = [0.01, 0.01, 0.04, 0.04, 0.09, 0.09, 0.16, 0.16, 0.25, 0.25, 0.36, 0.36]
+    results = []
 
-    for ticker in df['Ticker'].unique():
-        tdf = df[df['Ticker'] == ticker].sort_values('Date').reset_index(drop=True)
-        if len(tdf) < 13:
+    for ticker in df["Ticker"].unique():
+        tdf = df[df["Ticker"] == ticker].sort_values("Date").reset_index(drop=True)
+        if len(tdf) < 13 or tdf["Month"].iloc[-1] != latest_month:
             continue
-        # 12R
-        r12 = (tdf.loc[12, 'Close'] - tdf.loc[0, 'Close']) / tdf.loc[0, 'Close']
-        # 12WR
-        wr12 = sum(tdf.loc[i, '1R'] * weights[i] for i in range(12))
-        # 6V
-        v6 = tdf.loc[:5, '1R'].std(ddof=1) * np.sqrt(2)
-        # 6B
-        b6 = np.cov(tdf.loc[:5, '1R'], tdf.loc[:5, 'SPY 1R'])[0, 1] / np.var(tdf.loc[:5, 'SPY 1R'])
-        # DAM
-        dam = (r12 * wr12) / (v6 * b6) if all(pd.notna([r12, wr12, v6, b6])) and v6 * b6 != 0 else np.nan
-        sector = tdf.loc[0, 'Sector']
-        results.append({'Ticker': ticker, 'Sector': sector, 'DAM': dam})
+
+        try:
+            r12 = (tdf.loc[12, "Close"] - tdf.loc[0, "Close"]) / tdf.loc[0, "Close"]
+            wr12 = sum(tdf.loc[i, "1R"] * weights[i] for i in range(12))
+            v6 = tdf.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
+            b6 = np.cov(tdf.loc[:5, "1R"], tdf.loc[:5, "SPY 1R"])[0, 1] / np.var(tdf.loc[:5, "SPY 1R"])
+            dam = (r12 * wr12) / (v6 * b6) if all(pd.notna([r12, wr12, v6, b6])) and v6 * b6 != 0 else np.nan
+            results.append({
+                "Ticker": ticker,
+                "Sector": tdf.loc[0, "Sector"],
+                "DAM": dam
+            })
+        except Exception:
+            continue
 
     result_df = pd.DataFrame(results).dropna()
-
-    # Get top DAM ticker per sector
     top_tickers = (
-        result_df.sort_values(by='DAM', ascending=False)
-        .groupby('Sector')
+        result_df.sort_values("DAM", ascending=False)
+        .groupby("Sector")
         .first()
         .reset_index()
     )
 
-    # Format for display
     result = {}
     for _, row in top_tickers.iterrows():
-        result[row['Sector']] = {'top': row['Ticker']}
+        result[row["Sector"]] = {"top": row["Ticker"]}
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
