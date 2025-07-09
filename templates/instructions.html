@@ -1,18 +1,63 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>DAM Instructions</title>
+    <title>DAM Instructions</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 2rem;
+            max-width: 600px;
+            margin: auto;
+            line-height: 1.6;
+        }
+        h2 {
+            text-align: center;
+        }
+        ul {
+            padding-left: 1.2rem;
+        }
+        .status {
+            margin-top: 1rem;
+            font-weight: bold;
+        }
+        .loading {
+            color: gray;
+            font-style: italic;
+        }
+        form {
+            margin-top: 2rem;
+            text-align: center;
+        }
+        button {
+            padding: 0.6rem 1.5rem;
+            font-size: 1rem;
+        }
+    </style>
 </head>
 <body>
-  <h2>DAM Instructions:</h2>
-  <ul>
-    <li>Rotate at the beginning of the month.</li>
-    <li>Ensure current monthly data is true (before 5th).</li>
-    <li>Weight portfolio matching S&P sectors.</li>
-    <li>Errors/questions: tannerterry221@gmail.com</li>
-  </ul>
-  <form action="/tickers" method="post">
-    <button type="submit">Proceed</button>
-  </form>
+    <h2>DAM Instructions</h2>
+    <ul>
+        <li>Rotate at the beginning of the month (before 5th).</li>
+        <li>Ensure current monthly data is true.</li>
+        <li>Weight portfolio matching S&P sectors.</li>
+        <li>Errors/questions: tannerterry221@gmail.com</li>
+    </ul>
+
+    <div class="status">
+        Model using current monthly data:
+        <span id="status" class="loading">Loading...</span>
+    </div>
+
+    <form action="/tickers" method="post">
+        <button type="submit">Proceed</button>
+    </form>
+
+    <script>
+        window.onload = function () {
+            const statusSpan = document.getElementById("status");
+            statusSpan.classList.remove("loading");
+            statusSpan.textContent = "{{ 'TRUE' if is_current else 'FALSE' }}";
+        }
+    </script>
 </body>
 </html>
