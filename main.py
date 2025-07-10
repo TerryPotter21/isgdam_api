@@ -12,11 +12,12 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
 AUTHORIZED_CODE = "freelunch"
 
 def flatten(df):
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.droplevel(0)
+        df.columns = df.columns.droplevel(1)
     return df
 
 @app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
@@ -35,8 +36,13 @@ async def show_instructions(request: Request):
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
     spy = flatten(yf.download("SPY", start=sd, end=ed, interval="1mo", auto_adjust=True))
-    spy.index = pd.to_datetime(spy.index)
-    latest = spy.index.max().strftime("%Y-%m") if "Close" in spy.columns else "N/A"
+
+    if spy.empty or "Close" not in spy.columns:
+        latest = "N/A"
+    else:
+        spy = spy.reset_index()
+        latest = spy["Date"].max().strftime("%Y-%m")
+
     return templates.TemplateResponse("instructions.html", {
         "request": request,
         "current_month": cm,
@@ -46,49 +52,62 @@ async def show_instructions(request: Request):
 
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = ['AAPL','MSFT','JNJ','XOM','CVX']
+    tickers = ['AAPL', 'MSFT', 'JJN', 'JNJ', 'XOM', 'CVX']
     today = datetime.now()
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
 
     spy = flatten(yf.download("SPY", start=sd, end=ed, interval="1mo", auto_adjust=True))
-    spy.index = pd.to_datetime(spy.index)
-    if "Close" not in spy.columns:
+    if spy.empty or "Close" not in spy.columns:
         return templates.TemplateResponse("tickers.html", {
             "request": request,
-            "error": "SPY data missing 'Close'"
+            "error": "SPY data missing or incomplete"
         })
+    spy = spy.reset_index()
     spy["SPY1R"] = spy["Close"].pct_change().sub(0.024 / 12).fillna(0)
+
+    spy_map = dict(zip(spy["Date"], spy["SPY1R"]))
 
     dfs = []
     for t in tickers:
         df = flatten(yf.download(t, start=sd, end=ed, interval="1mo", auto_adjust=True))
-        if "Close" not in df.columns: continue
-        df = df[["Close"]].copy()
-        df.index = pd.to_datetime(df.index)
+        if df.empty or "Close" not in df.columns:
+            continue
+
+        df = df.reset_index()
         df["Ticker"] = t
         df["Sector"] = yf.Ticker(t).info.get("sector", "N/A")
         df["1R"] = df["Close"].pct_change().sub(0.024 / 12)
-        df["SPY1R"] = df.index.map(spy["SPY1R"].to_dict())
-        df = df.dropna(subset=["1R", "SPY1R"])
-        df["Date"] = df.index
-        dfs.append(df)
+        df["SPY1R"] = df["Date"].map(spy_map)
+        dfs.append(df.dropna(subset=["1R", "SPY1R"]))
 
-    df_all = pd.concat(dfs) if dfs else pd.DataFrame()
+    if not dfs:
+        return templates.TemplateResponse("tickers.html", {
+            "request": request,
+            "error": "No valid data returned for tickers"
+        })
+
+    df_all = pd.concat(dfs)
     df_all["Month"] = df_all["Date"].dt.to_period("M")
 
-    weights = [0.01,0.01,0.04,0.04,0.09,0.09,0.16,0.16,0.25,0.25,0.36,0.36]
+    weights = [0.01, 0.01, 0.04, 0.04, 0.09, 0.09, 0.16, 0.16, 0.25, 0.25, 0.36, 0.36]
     results = []
+
     for t, grp in df_all.groupby("Ticker"):
         grp = grp.sort_values("Date").reset_index(drop=True)
-        if len(grp) < 13 or grp["Sector"].iloc[0] == "N/A": continue
-        r12 = (grp.loc[12, "Close"] - grp.loc[0, "Close"]) / grp.loc[0, "Close"]
-        wr12 = sum(grp.loc[i, "1R"] * weights[i] for i in range(12))
-        v6 = grp.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
-        cov = np.cov(grp.loc[:5, "1R"], grp.loc[:5, "SPY1R"])[0,1]
-        b6 = cov / np.var(grp.loc[:5, "SPY1R"])
-        dam = (r12 * wr12) / (v6 * b6) if v6 * b6 else np.nan
-        results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
+        if len(grp) < 13 or grp["Sector"].iloc[0] == "N/A":
+            continue
+
+        try:
+            r12 = (grp.loc[12, "Close"] - grp.loc[0, "Close"]) / grp.loc[0, "Close"]
+            wr12 = sum(grp.loc[i, "1R"] * weights[i] for i in range(12))
+            v6 = grp.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
+            cov = np.cov(grp.loc[:5, "1R"], grp.loc[:5, "SPY1R"])[0, 1]
+            b6 = cov / np.var(grp.loc[:5, "SPY1R"])
+            dam = (r12 * wr12) / (v6 * b6) if v6 * b6 else np.nan
+            results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
+        except Exception as e:
+            continue
 
     res = pd.DataFrame(results).dropna(subset=["D"])
     tops = res.sort_values("D", ascending=False).groupby("Sector").first().reset_index()
