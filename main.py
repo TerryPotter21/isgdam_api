@@ -22,8 +22,8 @@ AUTHORIZED_CODE = "freelunch"
 def download_and_flatten(ticker, start, end):
     df = yf.download(ticker, start=start, end=end, interval="1mo", auto_adjust=True)
     if df.empty:
+        logging.warning(f"{ticker} returned empty DataFrame")
         return df
-    # Flatten multi-index if present
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.droplevel(1)
     return df
@@ -46,11 +46,18 @@ async def show_instructions(request: Request):
     end_date = today.strftime("%Y-%m-%d")
 
     spy = download_and_flatten("SPY", start_date, end_date)
-    latest = spy.index.max().strftime("%Y-%m") if "Close" in spy.columns else "Error"
-    is_current = (latest == current_month)
 
-    if "Close" not in spy.columns:
-        logging.error("SPY missing Close column; columns: %s", spy.columns)
+    if spy.empty or "Close" not in spy.columns:
+        latest = "Error"
+        logging.error("SPY data missing or missing 'Close' column")
+    else:
+        try:
+            latest = spy.index.max().strftime("%Y-%m")
+        except Exception as e:
+            logging.error(f"Failed to format SPY latest index: {e}")
+            latest = "Error"
+
+    is_current = (latest == current_month)
 
     return templates.TemplateResponse("instructions.html", {
         "request": request,
@@ -68,36 +75,41 @@ async def get_tickers(request: Request):
     end_date = today.strftime("%Y-%m-%d")
 
     spy = download_and_flatten("SPY", start_date, end_date)
-    if "Close" not in spy.columns:
+    if spy.empty or "Close" not in spy.columns:
         return templates.TemplateResponse("tickers.html", {"request": request, "tickers": {"Error": "SPY data missing"}})
 
-    spy_pr = spy["Close"].pct_change().sub(0.024/12).fillna(0).reset_index(drop=True)
+    spy_pr = spy["Close"].pct_change().sub(0.024 / 12).fillna(0).reset_index(drop=True)
 
     results = []
     for t in tickers:
         df = download_and_flatten(t, start_date, end_date)
-        if "Close" not in df.columns:
-            logging.warning("Skip %s missing Close", t)
+        if df.empty or "Close" not in df.columns:
+            logging.warning(f"{t} skipped due to missing data")
             continue
+
         info = yf.Ticker(t).info
         sec = info.get("sector")
         if not sec:
-            logging.warning("Skip %s missing sector", t)
+            logging.warning(f"{t} skipped due to missing sector")
             continue
 
         df = df.reset_index(drop=True)
-        df["1R"] = df["Close"].pct_change().sub(0.024/12)
+        df["1R"] = df["Close"].pct_change().sub(0.024 / 12)
         df["SPY"] = spy_pr
         if len(df) < 13:
-            logging.warning("Skip %s insufficient months (%d)", t, len(df))
+            logging.warning(f"{t} skipped due to insufficient data")
             continue
 
-        r12 = (df.loc[12, "Close"] - df.loc[0, "Close"]) / df.loc[0, "Close"]
-        weights = [0.01,0.01,0.04,0.04,0.09,0.09,0.16,0.16,0.25,0.25,0.36,0.36]
-        wr12 = sum(df.loc[i, "1R"] * weights[i] for i in range(12))
-        v6 = df.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
-        b6 = np.cov(df.loc[:5, "1R"], df.loc[:5, "SPY"])[0,1] / np.var(df.loc[:5, "SPY"])
-        dam = (r12 * wr12) / (v6 * b6) if np.isfinite(v6 * b6) else np.nan
+        try:
+            r12 = (df.loc[12, "Close"] - df.loc[0, "Close"]) / df.loc[0, "Close"]
+            weights = [0.01,0.01,0.04,0.04,0.09,0.09,0.16,0.16,0.25,0.25,0.36,0.36]
+            wr12 = sum(df.loc[i, "1R"] * weights[i] for i in range(12))
+            v6 = df.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
+            b6 = np.cov(df.loc[:5, "1R"], df.loc[:5, "SPY"])[0,1] / np.var(df.loc[:5, "SPY"])
+            dam = (r12 * wr12) / (v6 * b6) if np.isfinite(v6 * b6) else np.nan
+        except Exception as e:
+            logging.warning(f"Error calculating DAM for {t}: {e}")
+            continue
 
         results.append({"Sector": sec, "Ticker": t, "DAM": dam})
 
