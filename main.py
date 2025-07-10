@@ -1,99 +1,97 @@
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-import pandas as pd
-import yfinance as yf
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
-import os
+from dateutil.relativedelta import relativedelta
+import pandas as pd, numpy as np
+import yfinance as yf
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+AUTHORIZED_CODE = "freelunch"
 
-PASSWORD = os.getenv("APP_PASSWORD", "test123")
+def flatten(df):
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(1)
+    return df
 
-def get_monthly_data(ticker, start, end):
-    try:
-        df = yf.download(ticker, start=start, end=end, interval="1mo", auto_adjust=True)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(0)
-        if "Close" not in df.columns or df["Close"].dropna().empty:
-            print(f"ERROR: {ticker} data missing 'Close'")
-            return None
-        return df[["Close"]]
-    except Exception as e:
-        print(f"ERROR retrieving {ticker}: {e}")
-        return None
+@app.api_route("/", methods=["GET", "POST"], response_class=HTMLResponse)
+async def login_page(request: Request):
+    if request.method == "POST":
+        form = await request.form()
+        if form.get("password") == AUTHORIZED_CODE:
+            return RedirectResponse("/instructions", status_code=303)
+        return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid access code"})
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
-@app.get("/")
-async def root():
-    return RedirectResponse("/login")
-
-@app.get("/login")
-async def show_login(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-@app.post("/login")
-async def login(request: Request, password: str = Form(...)):
-    if password == PASSWORD:
-        return RedirectResponse(url="/instructions", status_code=303)
-    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid password"})
-
-@app.get("/instructions")
+@app.get("/instructions", response_class=HTMLResponse)
 async def show_instructions(request: Request):
-    end_date = datetime.today()
-    start_date = end_date - pd.DateOffset(months=13)
-    spy = get_monthly_data("SPY", start_date, end_date)
-    is_current = False
-    if spy is not None:
-        latest = spy.index.max()
-        if pd.notna(latest):
-            is_current = latest.month == end_date.month and latest.year == end_date.year
-    return templates.TemplateResponse("instructions.html", {"request": request, "is_current": is_current})
+    today = datetime.now()
+    cm = today.strftime("%Y-%m")
+    sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
+    ed = today.strftime("%Y-%m-%d")
+    spy = flatten(yf.download("SPY", start=sd, end=ed, interval="1mo", auto_adjust=True))
+    latest = spy.index.max().strftime("%Y-%m") if "Close" in spy.columns else "N/A"
+    return templates.TemplateResponse("instructions.html", {
+        "request": request,
+        "current_month": cm,
+        "latest_date": latest,
+        "is_current": latest == cm
+    })
 
-@app.post("/tickers")
+@app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = [
-        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "UNH", "JNJ", "XOM", "JPM",
-        "V", "PG", "LLY", "TSLA", "MA", "AVGO", "HD", "MRK", "PEP", "ABBV"
-    ]
-    end_date = datetime.today()
-    start_date = end_date - pd.DateOffset(months=13)
+    tickers = ['AAPL','MSFT','JJN','JNJ','XOM','CVX']
+    today = datetime.now()
+    sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
+    ed = today.strftime("%Y-%m-%d")
 
-    spy_data = get_monthly_data("SPY", start_date, end_date)
-    if spy_data is None or "Close" not in spy_data.columns:
-        print("SPY data missing 'Close'")
-        return templates.TemplateResponse("tickers.html", {"request": request, "top_tickers": [{"sector": "Error", "ticker": ""}]})
+    spy = flatten(yf.download("SPY", start=sd, end=ed, interval="1mo", auto_adjust=True))
+    if "Close" not in spy.columns:
+        return templates.TemplateResponse("tickers.html", {
+            "request": request,
+            "error": "SPY data missing 'Close'"
+        })
+    spy["SPY1R"] = spy["Close"].pct_change().sub(0.024/12).fillna(0)
 
-    spy_returns = spy_data["Close"].pct_change().sub(0.024 / 12).fillna(0)
+    dfs = []
+    for t in tickers:
+        df = yf.download(t, start=sd, end=ed, interval="1mo", auto_adjust=True)
+        df = flatten(df)
+        if "Close" not in df.columns: continue
+        df = df[["Close"]].copy()
+        df["Ticker"] = t
+        df["Sector"] = yf.Ticker(t).info.get("sector", "N/A")
+        df["Date"] = df.index
+        df["1R"] = df["Close"].pct_change().sub(0.024/12)
+        df["SPY1R"] = df["Date"].map(spy["SPY1R"].to_dict())
+        dfs.append(df.dropna(subset=["1R","SPY1R"]))
+
+    df_all = pd.concat(dfs) if dfs else pd.DataFrame()
+    df_all["Month"] = df_all["Date"].dt.to_period("M")
+
+    weights = [0.01,0.01,0.04,0.04,0.09,0.09,0.16,0.16,0.25,0.25,0.36,0.36]
     results = []
+    for t, grp in df_all.groupby("Ticker"):
+        grp = grp.sort_values("Date").reset_index(drop=True)
+        if len(grp) < 13 or grp["Sector"].iloc[0] == "N/A": continue
+        r12 = (grp.loc[12, "Close"] - grp.loc[0, "Close"]) / grp.loc[0, "Close"]
+        wr12 = sum(grp.loc[i, "1R"] * weights[i] for i in range(12))
+        v6 = grp.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
+        cov = np.cov(grp.loc[:5,"1R"], grp.loc[:5,"SPY1R"])[0,1]
+        b6 = cov / np.var(grp.loc[:5,"SPY1R"])
+        dam = (r12 * wr12) / (v6 * b6) if v6*b6 else np.nan
+        results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
 
-    for ticker in tickers:
-        df = get_monthly_data(ticker, start_date, end_date)
-        if df is None or len(df) < 13:
-            continue
-        try:
-            df["1R"] = df["Close"].pct_change().fillna(0)
-            df["12R"] = (df["Close"].iloc[-1] - df["Close"].iloc[0]) / df["Close"].iloc[0]
-            weights = [0.01, 0.01, 0.04, 0.04, 0.09, 0.09, 0.16, 0.16, 0.25, 0.25, 0.36, 0.36]
-            df["12WR"] = pd.Series(weights, index=df.index[-12:]) @ df["1R"].iloc[-12:]
-            df["6V"] = df["1R"].iloc[-6:].std() * (2 ** 0.5)
-            beta = df["1R"].iloc[-12:].cov(spy_returns.iloc[-12:]) / spy_returns.iloc[-12:].var()
-            df["6B"] = beta
-            df["DAM"] = (df["12R"] * df["12WR"]) / (df["6V"] * df["6B"])
-            final_score = df["DAM"].iloc[-1]
+    res = pd.DataFrame(results).dropna(subset=["D"])
+    tops = res.sort_values("D", ascending=False).groupby("Sector").first().reset_index()
+    output = [{"sector": r.Sector, "ticker": r.Ticker} for _, r in tops.iterrows()]
 
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            sector = info.get("sector", "Unknown")
-
-            if sector != "Unknown":
-                results.append({"ticker": ticker, "sector": sector, "DAM": final_score})
-        except Exception as e:
-            print(f"Error processing {ticker}: {e}")
-
-    df_results = pd.DataFrame(results)
-    top = df_results.sort_values("DAM", ascending=False).dropna(subset=["sector"])
-    top_by_sector = top.groupby("sector").first().reset_index()
-    top_list = [{"sector": row["sector"], "ticker": row["ticker"]} for _, row in top_by_sector.iterrows()]
-
-    return templates.TemplateResponse("tickers.html", {"request": request, "top_tickers": top_list})
+    return templates.TemplateResponse("tickers.html", {
+        "request": request,
+        "top_tickers": output
+    })
