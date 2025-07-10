@@ -40,13 +40,19 @@ async def show_instructions(request: Request):
     current_month = today.strftime("%Y-%m")
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
+
     spy = yf.download("SPY", start=start_date, end=end_date, interval="1mo", auto_adjust=True)
     if isinstance(spy.columns, pd.MultiIndex):
         spy.columns = spy.columns.droplevel(0)
+
     try:
-        latest_date = spy.index.max().strftime("%Y-%m") if "Close" in spy.columns else "Error"
-    except Exception:
+        latest_index = spy.index.max()
+        print(f"Latest SPY index: {latest_index}")
+        latest_date = latest_index.strftime("%Y-%m")
+    except Exception as e:
+        print(f"Error parsing SPY date: {e}")
         latest_date = "Error"
+
     is_current = latest_date == current_month
     return templates.TemplateResponse("instructions.html", {
         "request": request,
@@ -58,55 +64,60 @@ async def show_instructions(request: Request):
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
     tickers = [
-        'AAPL', 'MSFT', 'NVDA',  # Tech
-        'JNJ', 'PFE', 'ABBV',    # Healthcare
-        'XOM', 'CVX', 'COP',     # Energy
-        'JPM', 'BAC', 'GS',      # Financials
-        'WMT', 'COST', 'TGT',    # Consumer Staples
-        'NKE', 'HD', 'LOW'       # Consumer Discretionary
+        'AAPL', 'MSFT', 'NVDA',
+        'JNJ', 'PFE', 'ABBV',
+        'XOM', 'CVX', 'COP',
+        'JPM', 'BAC', 'GS',
+        'WMT', 'COST', 'TGT',
+        'NKE', 'HD', 'LOW'
     ]
 
     today = datetime.now()
     start_date = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
 
-    # SPY excess returns
+    all_data = []
+
     spy_data = yf.download("SPY", start=start_date, end=end_date, interval="1mo", auto_adjust=True)
     if isinstance(spy_data.columns, pd.MultiIndex):
         spy_data.columns = spy_data.columns.droplevel(0)
+
     if "Close" not in spy_data.columns:
         print("ERROR: SPY data missing 'Close'")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
             "tickers": {"Error": "SPY data missing 'Close'"}
         })
+
     spy_returns = spy_data["Close"].pct_change().sub(0.024 / 12).fillna(0)
     spy_returns.name = 'SPY 1R'
 
-    all_data = []
     for ticker in tickers:
         try:
             data = yf.download(ticker, start=start_date, end=end_date, interval="1mo", auto_adjust=True)
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.droplevel(0)
+
             if "Close" not in data.columns:
-                print(f"Skipping {ticker}: 'Close' not found.")
+                print(f"ERROR: {ticker} missing 'Close'")
                 continue
+
             info = yf.Ticker(ticker).info
-            sector = info.get('sector', 'N/A')
-            if sector == 'N/A' or pd.isna(sector):
-                print(f"Skipping {ticker}: sector not found.")
+            sector = info.get('sector', None)
+            if sector is None:
+                print(f"ERROR: {ticker} missing sector info")
                 continue
-            data = data[["Close"]].copy()
-            data["Ticker"] = ticker
-            data["Sector"] = sector
-            data["Date"] = data.index
-            data["1R"] = data["Close"].pct_change().sub(0.024 / 12)
-            data["SPY 1R"] = data["Date"].map(spy_returns.to_dict())
-            data.reset_index(drop=True, inplace=True)
-            all_data.append(data)
+
+            df = data.copy()
+            df['Ticker'] = ticker
+            df['Sector'] = sector
+            df['Date'] = df.index
+            df['1R'] = df['Close'].pct_change().sub(0.024 / 12)
+            df['SPY 1R'] = df['Date'].map(spy_returns.to_dict())
+            df.reset_index(drop=True, inplace=True)
+            all_data.append(df)
         except Exception as e:
-            print(f"Error downloading {ticker}: {e}")
+            print(f"ERROR fetching {ticker}: {e}")
             continue
 
     if not all_data:
@@ -115,36 +126,45 @@ async def get_tickers(request: Request):
             "tickers": {"Error": "No data could be retrieved."}
         })
 
-    df = pd.concat(all_data).dropna(subset=["1R", "SPY 1R"])
-    df["Month"] = df["Date"].dt.to_period("M")
+    df = pd.concat(all_data, ignore_index=True).dropna(subset=['1R', 'SPY 1R'])
+    df['Month'] = pd.to_datetime(df['Date']).dt.to_period('M')
 
-    results = []
     weights = [0.01, 0.01, 0.04, 0.04, 0.09, 0.09, 0.16, 0.16, 0.25, 0.25, 0.36, 0.36]
+    results = []
 
-    for ticker in df["Ticker"].unique():
-        tdf = df[df["Ticker"] == ticker].sort_values("Date").reset_index(drop=True)
+    for ticker in df['Ticker'].unique():
+        tdf = df[df['Ticker'] == ticker].sort_values('Date').reset_index(drop=True)
         if len(tdf) < 13:
             continue
-        r12 = (tdf.loc[12, "Close"] - tdf.loc[0, "Close"]) / tdf.loc[0, "Close"]
-        wr12 = sum(tdf.loc[i, "1R"] * weights[i] for i in range(12))
-        v6 = tdf.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
-        b6 = np.cov(tdf.loc[:5, "1R"], tdf.loc[:5, "SPY 1R"])[0, 1] / np.var(tdf.loc[:5, "SPY 1R"])
-        dam = (r12 * wr12) / (v6 * b6) if all(pd.notna([r12, wr12, v6, b6])) and v6 * b6 != 0 else np.nan
-        sector = tdf.loc[0, "Sector"]
-        results.append({"Ticker": ticker, "Sector": sector, "DAM": dam})
+        try:
+            r12 = (tdf.loc[12, 'Close'] - tdf.loc[0, 'Close']) / tdf.loc[0, 'Close']
+            wr12 = sum(tdf.loc[i, '1R'] * weights[i] for i in range(12))
+            v6 = tdf.loc[:5, '1R'].std(ddof=1) * np.sqrt(2)
+            b6 = np.cov(tdf.loc[:5, '1R'], tdf.loc[:5, 'SPY 1R'])[0, 1] / np.var(tdf.loc[:5, 'SPY 1R'])
+            dam = (r12 * wr12) / (v6 * b6) if all(pd.notna([r12, wr12, v6, b6])) and v6 * b6 != 0 else np.nan
+            sector = tdf.loc[0, 'Sector']
+            results.append({'Ticker': ticker, 'Sector': sector, 'DAM': dam})
+        except Exception as e:
+            print(f"ERROR processing {ticker}: {e}")
+            continue
 
     result_df = pd.DataFrame(results).dropna()
+    if result_df.empty:
+        return templates.TemplateResponse("tickers.html", {
+            "request": request,
+            "tickers": {"Error": "No tickers qualified."}
+        })
 
     top_tickers = (
-        result_df.sort_values(by="DAM", ascending=False)
-        .groupby("Sector")
+        result_df.sort_values(by='DAM', ascending=False)
+        .groupby('Sector')
         .first()
         .reset_index()
     )
 
     result = {}
     for _, row in top_tickers.iterrows():
-        result[row["Sector"]] = {"top": row["Ticker"]}
+        result[row['Sector']] = {'top': row['Ticker']}
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
