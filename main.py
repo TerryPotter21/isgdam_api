@@ -139,8 +139,9 @@ async def get_tickers(request: Request):
         lambda lst: pd.Series([lst[0], lst[1] if len(lst) > 1 else ""])
     )
 
-    # Add sector weights
+    # Add sector weights (fix: normalize column names)
     weight_data = YQ_Ticker("SPY").fund_sector_weightings
+    weight_data.columns = weight_data.columns.str.lower()
     weight_map = {row["sector"]: row["weight"] for _, row in weight_data.iterrows()} if not weight_data.empty else {}
 
     reshaped["Weight"] = reshaped["Sector"].map(weight_map)
