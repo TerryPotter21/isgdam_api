@@ -5,7 +5,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from yahooquery import Ticker as YQ_Ticker
 import pandas as pd, numpy as np
 import yfinance as yf
 
@@ -40,22 +39,25 @@ async def show_instructions(request: Request):
 
     if spy.empty or "Close" not in spy.columns:
         latest = "N/A"
-        is_current = False
     else:
         spy = spy.reset_index()
         latest = spy["Date"].max().strftime("%Y-%m")
-        is_current = latest == cm
 
     return templates.TemplateResponse("instructions.html", {
         "request": request,
         "current_month": cm,
         "latest_date": latest,
-        "is_current": is_current
+        "is_current": latest == cm
     })
 
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = ['AAPL', 'MSFT', 'JJN', 'JNJ', 'XOM', 'CVX']
+    tickers = [
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JNJ', 'PFE', 'MRK',
+        'CVX', 'XOM', 'COP', 'T', 'VZ', 'HD', 'LOW', 'MCD', 'NKE', 'SBUX', 'COST',
+        'WMT', 'BA', 'LMT', 'GE', 'GM', 'F', 'CSCO', 'IBM', 'INTC', 'TXN'
+    ]
+
     today = datetime.now()
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
@@ -117,38 +119,21 @@ async def get_tickers(request: Request):
             continue
 
     res = pd.DataFrame(results).dropna(subset=["D"])
-    if res.empty:
-        return templates.TemplateResponse("tickers.html", {
-            "request": request,
-            "tickers": [],
-            "error": "No valid tickers after DAM scoring"
-        })
-
-    # Get top 2 per sector
     top_two = res.sort_values("D", ascending=False).groupby("Sector").head(2)
 
-    # Reshape to rows with Sector, Ticker, Alt Ticker
-    reshaped = (
+    summary = (
         top_two.sort_values(["Sector", "D"], ascending=[True, False])
         .groupby("Sector")["Ticker"]
         .apply(list)
         .reset_index(name="Tickers")
     )
 
-    reshaped[["Ticker", "Alt_Ticker"]] = reshaped["Tickers"].apply(
+    summary[["Ticker", "Alt_Ticker"]] = summary["Tickers"].apply(
         lambda lst: pd.Series([lst[0], lst[1] if len(lst) > 1 else ""])
     )
 
-    # Add sector weights (fix: normalize column names)
-    weight_data = YQ_Ticker("SPY").fund_sector_weightings
-    weight_data.columns = weight_data.columns.str.lower()
-    weight_map = {row["sector"]: row["weight"] for _, row in weight_data.iterrows()} if not weight_data.empty else {}
-
-    reshaped["Weight"] = reshaped["Sector"].map(weight_map)
-    reshaped = reshaped.fillna("N/A")
-
     return templates.TemplateResponse("tickers.html", {
         "request": request,
-        "tickers": reshaped.to_dict(orient="records"),
+        "tickers": summary.to_dict(orient="records"),
         "error": None
     })
