@@ -3,35 +3,70 @@
 <head>
     <title>DAM Portfolio</title>
     <style>
-        body { font-family: Arial; padding: 40px; }
-        h2 { color: #333; }
-        table { border-collapse: collapse; width: 70%; }
-        th, td { border: 1px solid #aaa; padding: 10px; text-align: left; }
-        th { background-color: #eee; }
-        .error { color: red; margin-bottom: 20px; }
+        body {
+            font-family: Arial, sans-serif;
+            padding: 40px;
+        }
+        h2 {
+            color: #333;
+        }
+        table {
+            border-collapse: collapse;
+            width: 70%;
+            margin-bottom: 40px;
+        }
+        th, td {
+            border: 1px solid #aaa;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #eee;
+        }
+        .error {
+            color: red;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
     <h2>DAM Portfolio</h2>
+
     {% if error %}
         <div class="error">{{ error }}</div>
     {% endif %}
+
     {% if tickers %}
     <table>
         <tr>
-            <th>Sector</th><th>Ticker</th><th>Alt Ticker</th><th>Weight</th>
+            <th>Sector</th>
+            <th>Ticker</th>
+            <th>Alt Ticker</th>
         </tr>
         {% for row in tickers %}
         <tr>
             <td>{{ row.sector }}</td>
             <td>{{ row.ticker }}</td>
             <td>{{ row.alt_ticker }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if weights %}
+    <h3>Sector Weights</h3>
+    <table>
+        <tr>
+            <th>Sector</th>
+            <th>Weight</th>
+        </tr>
+        {% for row in weights %}
+        <tr>
+            <td>{{ row.sector }}</td>
             <td>{{ row.weight }}</td>
         </tr>
         {% endfor %}
     </table>
-    {% else %}
-        <p>No tickers found.</p>
     {% endif %}
 </body>
 </html>
