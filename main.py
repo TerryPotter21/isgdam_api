@@ -141,7 +141,7 @@ async def get_tickers(request: Request):
 
     # Add sector weights
     weight_data = YQ_Ticker("SPY").fund_sector_weightings
-    weight_map = {item["sector"]: item["weight"] for item in weight_data} if weight_data else {}
+    weight_map = {row["sector"]: row["weight"] for _, row in weight_data.iterrows()} if not weight_data.empty else {}
 
     reshaped["Weight"] = reshaped["Sector"].map(weight_map)
     reshaped = reshaped.fillna("N/A")
