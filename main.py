@@ -61,17 +61,19 @@ async def get_tickers(request: Request):
     if spy.empty or "Close" not in spy.columns:
         return templates.TemplateResponse("tickers.html", {
             "request": request,
+            "tickers": [],
             "error": "SPY data missing or incomplete"
         })
+
     spy = spy.reset_index()
     spy["SPY1R"] = spy["Close"].pct_change().sub(0.024 / 12).fillna(0)
-
     spy_map = dict(zip(spy["Date"], spy["SPY1R"]))
 
     dfs = []
     for t in tickers:
         df = flatten(yf.download(t, start=sd, end=ed, interval="1mo", auto_adjust=True))
         if df.empty or "Close" not in df.columns:
+            print(f"Skipping {t}: no data or missing 'Close'")
             continue
 
         df = df.reset_index()
@@ -79,12 +81,19 @@ async def get_tickers(request: Request):
         df["Sector"] = yf.Ticker(t).info.get("sector", "N/A")
         df["1R"] = df["Close"].pct_change().sub(0.024 / 12)
         df["SPY1R"] = df["Date"].map(spy_map)
-        dfs.append(df.dropna(subset=["1R", "SPY1R"]))
+        df = df.dropna(subset=["1R", "SPY1R"])
+
+        if len(df) >= 13 and df["Sector"].iloc[0] != "N/A":
+            dfs.append(df)
+        else:
+            print(f"Skipping {t}: insufficient data or missing sector")
 
     if not dfs:
+        print("⚠️ No tickers passed the data filters.")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
-            "error": "No valid data returned for tickers"
+            "tickers": [],
+            "error": "No tickers met the minimum criteria"
         })
 
     df_all = pd.concat(dfs)
@@ -95,19 +104,21 @@ async def get_tickers(request: Request):
 
     for t, grp in df_all.groupby("Ticker"):
         grp = grp.sort_values("Date").reset_index(drop=True)
-        if len(grp) < 13 or grp["Sector"].iloc[0] == "N/A":
-            continue
-
         try:
             r12 = (grp.loc[12, "Close"] - grp.loc[0, "Close"]) / grp.loc[0, "Close"]
             wr12 = sum(grp.loc[i, "1R"] * weights[i] for i in range(12))
             v6 = grp.loc[:5, "1R"].std(ddof=1) * np.sqrt(2)
             cov = np.cov(grp.loc[:5, "1R"], grp.loc[:5, "SPY1R"])[0, 1]
             b6 = cov / np.var(grp.loc[:5, "SPY1R"])
-            dam = (r12 * wr12) / (v6 * b6) if v6 * b6 else np.nan
+            if v6 == 0 or b6 == 0:
+                print(f"Skipped {t}: v6 or b6 was zero (v6={v6}, b6={b6})")
+                continue
+            dam = (r12 * wr12) / (v6 * b6)
             results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
         except Exception as e:
-            continue
+            print(f"Error processing {t}: {e}")
+
+    print(f"✅ Processed tickers: {len(results)}")
 
     res = pd.DataFrame(results).dropna(subset=["D"])
     tops = res.sort_values("D", ascending=False).groupby("Sector").first().reset_index()
@@ -115,5 +126,6 @@ async def get_tickers(request: Request):
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
-        "top_tickers": output
+        "tickers": output,
+        "error": None
     })
