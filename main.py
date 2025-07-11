@@ -7,6 +7,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd, numpy as np
 import yfinance as yf
+from yahooquery import Ticker
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -53,11 +54,11 @@ async def show_instructions(request: Request):
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
     tickers = [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JNJ', 'PFE', 'MRK',
-        'CVX', 'XOM', 'COP', 'T', 'VZ', 'HD', 'LOW', 'MCD', 'NKE', 'SBUX', 'COST',
-        'WMT', 'BA', 'LMT', 'GE', 'GM', 'F', 'CSCO', 'IBM', 'INTC', 'TXN'
+        "AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "PEP", "KO", "WMT", "COST",
+        "PFE", "JNJ", "MRK", "ABBV", "CVX", "XOM", "COP", "JPM", "GS", "MS", "BAC",
+        "NEE", "DUK", "SO", "LMT", "GE", "BA", "CAT", "PLD", "O", "AMT", "LIN", "APD", "SHW"
     ]
-
+    
     today = datetime.now()
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
@@ -78,6 +79,7 @@ async def get_tickers(request: Request):
     for t in tickers:
         df = flatten(yf.download(t, start=sd, end=ed, interval="1mo", auto_adjust=True))
         if df.empty or "Close" not in df.columns:
+            print(f"Skipping {t}: no data or missing 'Close'")
             continue
 
         df = df.reset_index()
@@ -89,8 +91,11 @@ async def get_tickers(request: Request):
 
         if len(df) >= 13 and df["Sector"].iloc[0] != "N/A":
             dfs.append(df)
+        else:
+            print(f"Skipping {t}: insufficient data or missing sector")
 
     if not dfs:
+        print("⚠️ No tickers passed the data filters.")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
             "tickers": [],
@@ -112,28 +117,47 @@ async def get_tickers(request: Request):
             cov = np.cov(grp.loc[:5, "1R"], grp.loc[:5, "SPY1R"])[0, 1]
             b6 = cov / np.var(grp.loc[:5, "SPY1R"])
             if v6 == 0 or b6 == 0:
+                print(f"Skipped {t}: v6 or b6 was zero (v6={v6}, b6={b6})")
                 continue
             dam = (r12 * wr12) / (v6 * b6)
             results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
-        except:
-            continue
+        except Exception as e:
+            print(f"Error processing {t}: {e}")
 
+    print(f"✅ Processed tickers: {len(results)}")
     res = pd.DataFrame(results).dropna(subset=["D"])
-    top_two = res.sort_values("D", ascending=False).groupby("Sector").head(2)
 
-    summary = (
-        top_two.sort_values(["Sector", "D"], ascending=[True, False])
-        .groupby("Sector")["Ticker"]
-        .apply(list)
-        .reset_index(name="Tickers")
+    # Get top two tickers per sector
+    top_two = (
+        res.sort_values("D", ascending=False)
+        .groupby("Sector")
+        .head(2)
+        .reset_index(drop=True)
     )
 
-    summary[["Ticker", "Alt_Ticker"]] = summary["Tickers"].apply(
-        lambda lst: pd.Series([lst[0], lst[1] if len(lst) > 1 else ""])
-    )
+    # Add SPY sector weights
+    try:
+        spy_weights_raw = Ticker("SPY").fund_sector_weightings
+        spy_weights_df = pd.DataFrame(spy_weights_raw.get("SPY", []))
+        spy_weights_df.columns = [col.lower() for col in spy_weights_df.columns]
+        weight_map = dict(zip(spy_weights_df["sector"], spy_weights_df["weight"]))
+    except Exception as e:
+        print(f"⚠️ Could not fetch SPY weights: {e}")
+        weight_map = {}
+
+    output = []
+    for sector, group in top_two.groupby("Sector"):
+        tickers_sorted = group.sort_values("D", ascending=False)["Ticker"].tolist()
+        weight = f"{round(weight_map.get(sector, 0) * 100, 2)}%" if sector in weight_map else "N/A"
+        output.append({
+            "sector": sector,
+            "ticker": tickers_sorted[0] if len(tickers_sorted) > 0 else "N/A",
+            "alt_ticker": tickers_sorted[1] if len(tickers_sorted) > 1 else "N/A",
+            "weight": weight
+        })
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
-        "tickers": summary.to_dict(orient="records"),
+        "tickers": output,
         "error": None
     })
