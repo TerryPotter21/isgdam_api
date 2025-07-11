@@ -1,16 +1,17 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Login - DAM Access</title>
+    <title>DAM Login</title>
 </head>
 <body>
     <h2>Enter DAM Passcode</h2>
     <form method="post">
-        <input type="password" name="password" placeholder="Enter password" required>
+        <input type="password" name="password" placeholder="DAM Passcode" required>
         <button type="submit">Submit</button>
     </form>
+
     {% if error %}
-    <p style="color: red;">{{ error }}</p>
+        <p style="color: red;">{{ error }}</p>
     {% endif %}
 </body>
 </html>
