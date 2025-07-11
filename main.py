@@ -55,17 +55,7 @@ async def show_instructions(request: Request):
 
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = ['A', 'AAPL', 'ABBV', 'ABC', 'ABMD', 'ABT', 'ACGL', 'ACN', 'ADBE', 'ADI', 'ADM', 'ADP', 'ADSK',
-    'AEE', 'AEP', 'AES', 'AFL', 'AIG', 'AIZ', 'AJG', 'AKAM', 'ALB', 'ALGN', 'ALK', 'ALL', 'ALLE', 'AMAT',
-    'AMCR', 'AMD', 'AME', 'AMGN', 'AMP', 'AMT', 'AMZN', 'ANET', 'ANSS', 'AON', 'AOS', 'APA', 'APD', 'APH',
-    'APTV', 'ARE', 'ATO', 'ATVI', 'AVB', 'AVGO', 'AVY', 'AWK', 'AXP', 'AZO', 'BA', 'BAC', 'BAX', 'BBWI',
-    'BBY', 'BDX', 'BEN', 'BF.B', 'BIIB', 'BK', 'BKNG', 'BKR', 'BLK', 'BLL', 'BMY', 'BR', 'BRK.B', 'BRO',
-    'BSX', 'BXP', 'C', 'CAG', 'CAH', 'CARR', 'CAT', 'CB', 'CBOE', 'CBRE', 'CCI', 'CCL', 'CDNS',
-    'CDW', 'CEG', 'CF', 'CFG', 'CHD', 'CHRW', 'CHTR', 'CI', 'CINF', 'CL', 'CLX', 'CMCSA', 'CME',
-    'CMG', 'CMS', 'CNC', 'CNP', 'COF', 'COO', 'COP', 'COST', 'CPB', 'CPRT', 'CPT', 'CRL', 'CRM', 'CRWD', 'CSCO',
-    'CSGP', 'CSX', 'CTAS', 'CTLT', 'CTRA', 'CTSH', 'CTVA', 'CVS', 'CVX', 'D', 'DAL', 'DD', 'DE', 'DELL', 'DECK', 'DG', 'DGX', 'DHI', 'DHR', 'DIS', 'DISCA', 'DISCK', 'DISH', 'DLR', 'DLTR', 'DOCU', 'DOV', 'DOW',
-    'DPZ', 'DRE', 'DRI', 'DTE', 'DUK', 'DVA', 'DVN', 'DXCM', 'EA', 'EBAY', 'ECL', 'ED', 'EFX', 'EIX', 'EL',
-    'EMN', 'EMR', 'ENPH', 'EOG', 'EPAM', 'EQIX', 'EQR']
+    tickers = ['AAPL', 'MSFT', 'JJN', 'JNJ', 'XOM', 'CVX']
     today = datetime.now()
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
@@ -138,25 +128,26 @@ async def get_tickers(request: Request):
     top_two = res.sort_values("D", ascending=False).groupby("Sector").head(2)
 
     # Reshape to rows with Sector, Ticker, Alt Ticker
-    summary = (
+    reshaped = (
         top_two.sort_values(["Sector", "D"], ascending=[True, False])
         .groupby("Sector")["Ticker"]
         .apply(list)
-        .reset_index()
+        .reset_index(name="Tickers")
     )
 
-    summary["Ticker"] = summary["Ticker"].apply(lambda x: x[0] if len(x) > 0 else "")
-    summary["Alt_Ticker"] = summary["Ticker"].apply(lambda x: x[1] if len(x) > 1 else "")
+    reshaped[["Ticker", "Alt_Ticker"]] = reshaped["Tickers"].apply(
+        lambda lst: pd.Series([lst[0], lst[1] if len(lst) > 1 else ""])
+    )
 
     # Add sector weights
     weight_data = YQ_Ticker("SPY").fund_sector_weightings
     weight_map = {item["sector"]: item["weight"] for item in weight_data} if weight_data else {}
 
-    summary["Weight"] = summary["Sector"].map(weight_map)
-    summary = summary.fillna("N/A")
+    reshaped["Weight"] = reshaped["Sector"].map(weight_map)
+    reshaped = reshaped.fillna("N/A")
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
-        "tickers": summary.to_dict(orient="records"),
+        "tickers": reshaped.to_dict(orient="records"),
         "error": None
     })

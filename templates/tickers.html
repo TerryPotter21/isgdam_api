@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Top DAM Tickers</title>
+    <title>DAM Portfolio</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -39,7 +39,7 @@
     <table>
         <tr>
             <th>Sector</th>
-            <th>Top Ticker</th>
+            <th>Ticker</th>
             <th>Alt Ticker</th>
             <th>SPY Weight</th>
         </tr>
@@ -55,16 +55,5 @@
     {% else %}
         <p>No tickers found.</p>
     {% endif %}
-
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            const loadingMsg = document.createElement("p");
-            loadingMsg.innerText = "Loading your DAM tickers...";
-            loadingMsg.style.fontWeight = "bold";
-            loadingMsg.style.fontSize = "18px";
-            document.body.prepend(loadingMsg);
-            setTimeout(() => loadingMsg.remove(), 3000);
-        });
-    </script>
 </body>
 </html>

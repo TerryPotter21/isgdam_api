@@ -4,18 +4,21 @@
     <title>DAM Instructions</title>
 </head>
 <body>
-    <h2>DAM Instructions:</h2>
-    <ul>
-        <li>Rotate at the beginning of the month (before 5th).</li>
-        <li>Ensure current monthly data is true.</li>
-        <li>Weight portfolio matching S&P sectors.</li>
-        <li>Errors/questions: tannerterry221@gmail.com</li>
-    </ul>
-
+    <h2>Instructions</h2>
+    <p>Current Month: {{ current_month }}</p>
+    <p>Latest Data Available: {{ latest_date }}</p>
     <p>Model using current monthly data: <strong>{{ is_current | upper }}</strong></p>
 
-    <form action="/tickers" method="post">
+    <form method="post" action="/tickers" onsubmit="showLoading()">
         <button type="submit">Proceed</button>
     </form>
+
+    <p id="loadingMsg" style="display:none; font-weight:bold; font-size:18px;">Loading your DAM tickers...</p>
+
+    <script>
+        function showLoading() {
+            document.getElementById("loadingMsg").style.display = "block";
+        }
+    </script>
 </body>
 </html>
