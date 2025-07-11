@@ -3,52 +3,30 @@
 <head>
     <title>DAM Portfolio</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 40px;
-        }
-        h2 {
-            color: #333;
-        }
-        table {
-            border-collapse: collapse;
-            width: 80%;
-        }
-        th, td {
-            border: 1px solid #aaa;
-            padding: 10px;
-            text-align: left;
-        }
-        th {
-            background-color: #eee;
-        }
-        .error {
-            color: red;
-            margin-bottom: 20px;
-        }
+        body { font-family: Arial; padding: 40px; }
+        h2 { color: #333; }
+        table { border-collapse: collapse; width: 70%; }
+        th, td { border: 1px solid #aaa; padding: 10px; text-align: left; }
+        th { background-color: #eee; }
+        .error { color: red; margin-bottom: 20px; }
     </style>
 </head>
 <body>
     <h2>DAM Portfolio</h2>
-
     {% if error %}
         <div class="error">{{ error }}</div>
     {% endif %}
-
     {% if tickers %}
     <table>
         <tr>
-            <th>Sector</th>
-            <th>Ticker</th>
-            <th>Alt Ticker</th>
-            <th>SPY Weight</th>
+            <th>Sector</th><th>Ticker</th><th>Alt Ticker</th><th>Weight</th>
         </tr>
         {% for row in tickers %}
         <tr>
-            <td>{{ row.Sector }}</td>
-            <td>{{ row.Ticker }}</td>
-            <td>{{ row.Alt_Ticker }}</td>
-            <td>{{ row.Weight }}%</td>
+            <td>{{ row.sector }}</td>
+            <td>{{ row.ticker }}</td>
+            <td>{{ row.alt_ticker }}</td>
+            <td>{{ row.weight }}</td>
         </tr>
         {% endfor %}
     </table>
