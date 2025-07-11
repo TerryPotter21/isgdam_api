@@ -12,7 +12,7 @@
         }
         table {
             border-collapse: collapse;
-            width: 60%;
+            width: 80%;
         }
         th, td {
             border: 1px solid #aaa;
@@ -26,16 +26,10 @@
             color: red;
             margin-bottom: 20px;
         }
-        pre {
-            background: #f4f4f4;
-            padding: 10px;
-            margin-top: 30px;
-            font-size: 14px;
-        }
     </style>
 </head>
 <body>
-    <h2>Top DAM Tickers by Sector</h2>
+    <h2>DAM Portfolio</h2>
 
     {% if error %}
         <div class="error">{{ error }}</div>
@@ -46,11 +40,15 @@
         <tr>
             <th>Sector</th>
             <th>Top Ticker</th>
+            <th>Alt Ticker</th>
+            <th>SPY Weight</th>
         </tr>
         {% for row in tickers %}
         <tr>
-            <td>{{ row.sector }}</td>
-            <td>{{ row.ticker }}</td>
+            <td>{{ row.Sector }}</td>
+            <td>{{ row.Ticker }}</td>
+            <td>{{ row.Alt_Ticker }}</td>
+            <td>{{ row.Weight }}%</td>
         </tr>
         {% endfor %}
     </table>
@@ -58,6 +56,15 @@
         <p>No tickers found.</p>
     {% endif %}
 
-    <pre>{{ tickers | tojson }}</pre> <!-- Optional: remove later -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const loadingMsg = document.createElement("p");
+            loadingMsg.innerText = "Loading your DAM tickers...";
+            loadingMsg.style.fontWeight = "bold";
+            loadingMsg.style.fontSize = "18px";
+            document.body.prepend(loadingMsg);
+            setTimeout(() => loadingMsg.remove(), 3000);
+        });
+    </script>
 </body>
 </html>

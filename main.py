@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+from yahooquery import Ticker as YQ_Ticker
 import pandas as pd, numpy as np
 import yfinance as yf
 
@@ -39,20 +40,32 @@ async def show_instructions(request: Request):
 
     if spy.empty or "Close" not in spy.columns:
         latest = "N/A"
+        is_current = False
     else:
         spy = spy.reset_index()
         latest = spy["Date"].max().strftime("%Y-%m")
+        is_current = latest == cm
 
     return templates.TemplateResponse("instructions.html", {
         "request": request,
         "current_month": cm,
         "latest_date": latest,
-        "is_current": latest == cm
+        "is_current": is_current
     })
 
 @app.post("/tickers", response_class=HTMLResponse)
 async def get_tickers(request: Request):
-    tickers = ['AAPL', 'MSFT', 'JJN', 'JNJ', 'XOM', 'CVX']
+    tickers = ['A', 'AAPL', 'ABBV', 'ABC', 'ABMD', 'ABT', 'ACGL', 'ACN', 'ADBE', 'ADI', 'ADM', 'ADP', 'ADSK',
+    'AEE', 'AEP', 'AES', 'AFL', 'AIG', 'AIZ', 'AJG', 'AKAM', 'ALB', 'ALGN', 'ALK', 'ALL', 'ALLE', 'AMAT',
+    'AMCR', 'AMD', 'AME', 'AMGN', 'AMP', 'AMT', 'AMZN', 'ANET', 'ANSS', 'AON', 'AOS', 'APA', 'APD', 'APH',
+    'APTV', 'ARE', 'ATO', 'ATVI', 'AVB', 'AVGO', 'AVY', 'AWK', 'AXP', 'AZO', 'BA', 'BAC', 'BAX', 'BBWI',
+    'BBY', 'BDX', 'BEN', 'BF.B', 'BIIB', 'BK', 'BKNG', 'BKR', 'BLK', 'BLL', 'BMY', 'BR', 'BRK.B', 'BRO',
+    'BSX', 'BXP', 'C', 'CAG', 'CAH', 'CARR', 'CAT', 'CB', 'CBOE', 'CBRE', 'CCI', 'CCL', 'CDNS',
+    'CDW', 'CEG', 'CF', 'CFG', 'CHD', 'CHRW', 'CHTR', 'CI', 'CINF', 'CL', 'CLX', 'CMCSA', 'CME',
+    'CMG', 'CMS', 'CNC', 'CNP', 'COF', 'COO', 'COP', 'COST', 'CPB', 'CPRT', 'CPT', 'CRL', 'CRM', 'CRWD', 'CSCO',
+    'CSGP', 'CSX', 'CTAS', 'CTLT', 'CTRA', 'CTSH', 'CTVA', 'CVS', 'CVX', 'D', 'DAL', 'DD', 'DE', 'DELL', 'DECK', 'DG', 'DGX', 'DHI', 'DHR', 'DIS', 'DISCA', 'DISCK', 'DISH', 'DLR', 'DLTR', 'DOCU', 'DOV', 'DOW',
+    'DPZ', 'DRE', 'DRI', 'DTE', 'DUK', 'DVA', 'DVN', 'DXCM', 'EA', 'EBAY', 'ECL', 'ED', 'EFX', 'EIX', 'EL',
+    'EMN', 'EMR', 'ENPH', 'EOG', 'EPAM', 'EQIX', 'EQR']
     today = datetime.now()
     sd = (today - relativedelta(months=13)).replace(day=1).strftime("%Y-%m-%d")
     ed = today.strftime("%Y-%m-%d")
@@ -73,7 +86,6 @@ async def get_tickers(request: Request):
     for t in tickers:
         df = flatten(yf.download(t, start=sd, end=ed, interval="1mo", auto_adjust=True))
         if df.empty or "Close" not in df.columns:
-            print(f"Skipping {t}: no data or missing 'Close'")
             continue
 
         df = df.reset_index()
@@ -85,11 +97,8 @@ async def get_tickers(request: Request):
 
         if len(df) >= 13 and df["Sector"].iloc[0] != "N/A":
             dfs.append(df)
-        else:
-            print(f"Skipping {t}: insufficient data or missing sector")
 
     if not dfs:
-        print("⚠️ No tickers passed the data filters.")
         return templates.TemplateResponse("tickers.html", {
             "request": request,
             "tickers": [],
@@ -111,21 +120,43 @@ async def get_tickers(request: Request):
             cov = np.cov(grp.loc[:5, "1R"], grp.loc[:5, "SPY1R"])[0, 1]
             b6 = cov / np.var(grp.loc[:5, "SPY1R"])
             if v6 == 0 or b6 == 0:
-                print(f"Skipped {t}: v6 or b6 was zero (v6={v6}, b6={b6})")
                 continue
             dam = (r12 * wr12) / (v6 * b6)
             results.append({"Sector": grp["Sector"].iloc[0], "Ticker": t, "D": dam})
-        except Exception as e:
-            print(f"Error processing {t}: {e}")
-
-    print(f"✅ Processed tickers: {len(results)}")
+        except:
+            continue
 
     res = pd.DataFrame(results).dropna(subset=["D"])
-    tops = res.sort_values("D", ascending=False).groupby("Sector").first().reset_index()
-    output = [{"sector": r.Sector, "ticker": r.Ticker} for _, r in tops.iterrows()]
+    if res.empty:
+        return templates.TemplateResponse("tickers.html", {
+            "request": request,
+            "tickers": [],
+            "error": "No valid tickers after DAM scoring"
+        })
+
+    # Get top 2 per sector
+    top_two = res.sort_values("D", ascending=False).groupby("Sector").head(2)
+
+    # Reshape to rows with Sector, Ticker, Alt Ticker
+    summary = (
+        top_two.sort_values(["Sector", "D"], ascending=[True, False])
+        .groupby("Sector")["Ticker"]
+        .apply(list)
+        .reset_index()
+    )
+
+    summary["Ticker"] = summary["Ticker"].apply(lambda x: x[0] if len(x) > 0 else "")
+    summary["Alt_Ticker"] = summary["Ticker"].apply(lambda x: x[1] if len(x) > 1 else "")
+
+    # Add sector weights
+    weight_data = YQ_Ticker("SPY").fund_sector_weightings
+    weight_map = {item["sector"]: item["weight"] for item in weight_data} if weight_data else {}
+
+    summary["Weight"] = summary["Sector"].map(weight_map)
+    summary = summary.fillna("N/A")
 
     return templates.TemplateResponse("tickers.html", {
         "request": request,
-        "tickers": output,
+        "tickers": summary.to_dict(orient="records"),
         "error": None
     })

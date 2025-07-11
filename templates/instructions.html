@@ -12,7 +12,7 @@
         <li>Errors/questions: tannerterry221@gmail.com</li>
     </ul>
 
-    <p>Model using current monthly data: <strong>{{ is_current }}</strong></p>
+    <p>Model using current monthly data: <strong>{{ is_current | upper }}</strong></p>
 
     <form action="/tickers" method="post">
         <button type="submit">Proceed</button>
